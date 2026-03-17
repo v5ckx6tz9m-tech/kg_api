@@ -6,7 +6,7 @@ import os
 
 load_dotenv()
 
-app = FastAPI(title="KG API", version="1.0.0")
+app = FastAPI(title="KG API", version="1.0.1")
 
 NEO4J_URI = os.getenv("NEO4J_URI")
 NEO4J_USER = os.getenv("NEO4J_USER")
@@ -17,23 +17,18 @@ driver = GraphDatabase.driver(
     auth=(NEO4J_USER, NEO4J_PASSWORD)
 )
 
-def node_display_name(props: Dict[str, Any]) -> str:
-    return (
-        props.get("name")
-        or props.get("疾病")
-        or props.get("症状")
-        or props.get("药物")
-        or props.get("诊断")
-        or props.get("并发症")
-        or str(props)
-    )
+def get_names(nodes) -> List[str]:
+    result = []
+    for n in nodes:
+        if n is not None:
+            props = dict(n)
+            result.append(props.get("name", ""))
+    return result
 
 def search_medical_graph(q: str, limit: int = 10) -> List[Dict[str, Any]]:
     cypher = """
     MATCH (d:Disease)
     WHERE d.name CONTAINS $q
-       OR d.disease CONTAINS $q
-       OR d.疾病 CONTAINS $q
     OPTIONAL MATCH (d)-[:HAS_SYMPTOM]->(s:Symptom)
     OPTIONAL MATCH (d)-[:HAS_COMPLICATION]->(c:Complication)
     OPTIONAL MATCH (d)-[:TREATED_BY]->(dr:Drug)
@@ -47,44 +42,40 @@ def search_medical_graph(q: str, limit: int = 10) -> List[Dict[str, Any]]:
     """
 
     with driver.session() as session:
-        result = session.run(cypher, q=q, limit=limit)
+        records = session.run(cypher, q=q, limit=limit)
         rows = []
 
-        for record in result:
-            disease_node = record["d"]
-            symptoms = record["symptoms"]
-            complications = record["complications"]
-            drugs = record["drugs"]
-            diagnoses = record["diagnoses"]
-
-            disease_props = dict(disease_node) if disease_node else {}
-
-            def names(nodes):
-                out = []
-                for n in nodes:
-                    if n is None:
-                        continue
-                    out.append(node_display_name(dict(n)))
-                return out
+        for record in records:
+            d = dict(record["d"])
 
             rows.append({
-                "disease": node_display_name(disease_props),
-                "disease_props": disease_props,
-                "symptoms": names(symptoms),
-                "complications": names(complications),
-                "drugs": names(drugs),
-                "diagnoses": names(diagnoses),
+                "disease": d.get("name", ""),
+                "disease_id": d.get("id", ""),
+                "category": d.get("category", ""),
+                "symptoms": get_names(record["symptoms"]),
+                "complications": get_names(record["complications"]),
+                "drugs": get_names(record["drugs"]),
+                "diagnoses": get_names(record["diagnoses"])
             })
 
         return rows
 
 @app.get("/health")
 def health():
-    return {
-        "ok": True,
-        "data_source": "neo4j_medical",
-        "neo4j_uri": NEO4J_URI
-    }
+    try:
+        with driver.session() as session:
+            session.run("RETURN 1 AS ok").single()
+        return {
+            "ok": True,
+            "data_source": "neo4j_medical",
+            "neo4j_uri": NEO4J_URI
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "neo4j_uri": NEO4J_URI
+        }
 
 @app.get("/retrieve")
 def retrieve(
