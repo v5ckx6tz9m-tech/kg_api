@@ -90,3 +90,12 @@ def retrieve(
         "count": len(results),
         "results": results
     }
+@app.get("/retrieve_test")
+def retrieve_test(q: str, top_k: int = 5):
+    return {
+        "question": q,
+        "evidences": [
+            "证据1：这是测试数据",
+            "证据2：系统正常运行"
+        ]
+    }
